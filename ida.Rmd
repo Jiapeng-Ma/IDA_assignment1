@@ -1,0 +1,158 @@
+---
+title: "IDA"
+author: "Ma Jiapeng"
+date: "2024/3/22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Q2, since too much output, I switch to run the code only
+```{r message=FALSE, warning=FALSE, include=FALSE}
+library(mice)
+load("dataex2.Rdata")
+seed_value <- 1
+m <- 20 # Number of imputations
+
+# Define the function to calculate coverage for β1
+calculate_coverage <- function(data, method) {
+  #assign 0 for coverage check
+  coverages <- array(0, dim = 100)
+  # For reproducibility
+  set.seed(seed_value) 
+  for (i in 1:100) {
+    
+    imp <- mice(data[, , i], method = method, m = m, maxit = 5)
+    fit <- with(imp, lm(Y ~ X))
+    poolFit <- pool(fit)
+    summaryFit <- summary(poolFit)
+    
+    # Calculate 95% CI for β1
+    estimate <- summaryFit$estimate[2]  
+    std_error <- summaryFit$std.error[2]  
+    ci_lower <- estimate - 1.96 * std_error
+    ci_upper <- estimate + 1.96 * std_error
+    
+    # Check if the true β1 is within the CI
+    coverages[i] <- ci_lower <= 3 && ci_upper >= 3
+  }
+  
+  # Calculate empirical coverage probability
+  mean(coverages)
+}
+
+# Calculate coverage for both methods
+coverage_stochastic <- calculate_coverage(dataex2, method = "norm.nob")
+coverage_bootstrap <- calculate_coverage(dataex2, method = "norm.boot")
+
+# Output the coverage results 
+cat("Coverage for Stochastic Regression Imputation:", coverage_stochastic, "\n", "Coverage for Bootstrap Based Imputation:", coverage_bootstrap, "\n")
+```
+
+
+
+
+
+## Q3
+```{r}
+load("dataex3.Rdata")
+data_q3 <- dataex3
+
+
+sigma_squared <- 1.5^2
+# Detecting limit
+D <- min(data_q3$X[data_q3$R == 0])
+
+# Define the log-likelihood function for left-censored data
+log_likelihood <- function(mu, X, R, D, sigma_squared) {
+  # Log-density for the non-censored observations
+  uncensored <- X[R == 1]
+  log_density <- dnorm(uncensored, mean = mu, sd = sqrt(sigma_squared), log = TRUE)
+  
+  # Log-CDF for the censored observations
+  censored <- X[R == 0]
+  log_cdf <- pnorm(censored, mean = mu, sd = sqrt(sigma_squared), lower.tail = TRUE, log.p = TRUE)
+  
+  # Combine both to get the full log-likelihood
+  ll <- sum(log_density) + sum(log_cdf)
+  return(-ll)  # Optimization functions perform minimization
+}
+
+# MLE function using the 'optim' method
+mle_mu <- function(X, R, D, sigma_squared) {
+  opt_res <- optim(par = 0, fn = log_likelihood, X = X, R = R, D = D, sigma_squared = sigma_squared, method = "BFGS")
+  return(opt_res$par)
+}
+
+# Calculate MLE for mu
+mu_estimate <- mle_mu(data_q3$X, data_q3$R, D, sigma_squared)
+print(mu_estimate)
+
+
+```
+
+
+
+
+## Q5
+```{r}
+
+library(maxLik)
+load("dataex5.Rdata")
+data_q5 <- dataex5
+# Define the log-likelihood function for logistic regression
+logLikLogistic <- function(beta, X, Y) {
+  p <- 1 / (1 + exp(-(beta[1] + beta[2] * X)))
+  ll <- sum(log(p[Y == 1])) + sum(log(1 - p[Y == 0]))
+  return(ll)
+}
+
+# Define the M-step using maxLik package
+M_step <- function(logLik, start_beta, X, Y) {
+  maxLik(logLik, start=start_beta, X=X, Y=Y)
+}
+
+# Initialize parameters
+beta_init <- c(0, 0)  # Starting values for beta_0 and beta_1
+
+# Define the missing data indicator (1 if missing, 0 if observed)
+missing <- is.na(data_q5$Y)
+
+# Start the EM algorithm
+converged <- FALSE
+tolerance <- 1e-8
+max_iter <- 1000
+iter <- 0
+beta <- beta_init
+
+while (!converged && iter < max_iter) {
+  iter <- iter + 1
+  # E-step: Using current parameters, estimate p(Y=1) for missing Y
+  p_missing <- 1 / (1 + exp(-(beta[1] + beta[2] * data_q5$X[missing])))
+  
+  # Replace NA values in Y with the estimated probabilities
+  Y_complete <- data_q5$Y
+  Y_complete[missing] <- p_missing
+  
+  # M-step: Fit logistic regression model to the complete data
+  m_result <- M_step(logLikLogistic, beta, data_q5$X, Y_complete)
+  beta_new <- coef(m_result)
+  
+  # Check convergence
+  if (max(abs(beta_new - beta)) < tolerance) {
+    converged <- TRUE
+  } else {
+    beta <- beta_new
+  }
+}
+
+# The EM algorithm has converged or reached the maximum number of iterations
+beta_final <- beta
+
+# Output the final parameter estimates
+print(beta_final)
+
+```
+
